@@ -1,0 +1,30 @@
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+
+# Secrets — JANGAN PERNAH COMMIT
+.env
+*.jks
+*.keystore
+google-services.json
+GoogleService-Info.plist
+key.properties
+
+# Debug symbols (upload ke Crashlytics, jangan ke git)
+build/debug-info/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# OS
+.DS_Store
+Thumbs.db

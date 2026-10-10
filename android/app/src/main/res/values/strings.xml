@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Application label only.
+
+    The Cloudinary cloud name is *not* declared here: it is injected at build
+    time by `android/app/build.gradle.kts` as a `resValue`, from a gitignored
+    `android/local.properties`. Declaring it in a checked-in file would either
+    commit the cloud name or require a source edit on every environment change.
+
+    See `docs/RELEASE.md` for the full setup.
+-->
+<resources>
+    <string name="app_name">SAE Absensi</string>
+</resources>

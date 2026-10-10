@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Warna ikon notifikasi — teal brand SAE -->
+    <color name="notification_color">#00695C</color>
+    <color name="ic_launcher_background">#00695C</color>
+</resources>

@@ -1,0 +1,141 @@
+name: sae
+description: "SAE — Sistem Absensi Elektronik. Flutter app absensi dengan verifikasi lokasi, wajah liveness, enkripsi AES-256-GCM, dan FCM push notifications."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # ── Firebase ──────────────────────────────────────────────────────────────
+  firebase_core: ^4.4.0
+  cloud_firestore: ^6.1.0
+  firebase_auth: ^6.5.0
+  # FCM push notifications
+  # Pushed notification for shift reminders and leave decisions. Pinned to the
+  # 16.x line because that is the series built against firebase_core 4.x — the
+  # 15.x line still requires firebase_core 3.x, which does not resolve alongside
+  # the rest of the Firebase plugins here.
+  firebase_messaging: ^16.7.0
+
+  # ── GPS & Peta ────────────────────────────────────────────────────────────
+  geolocator: ^14.0.2
+  flutter_map: ^8.2.2
+  latlong2: ^0.9.1
+
+  # ── Kamera & Face Detection ───────────────────────────────────────────────
+  camera: ^0.12.1
+  google_mlkit_face_detection: ^0.15.1
+  image_picker: ^1.2.0
+  image: ^4.3.0
+
+  # ── Jaringan ──────────────────────────────────────────────────────────────
+  http: ^1.5.0
+  dio: ^5.9.0
+  path_provider: ^2.1.5
+  # ── Notifikasi lokal (shift reminders, status bar) ───────────────────────
+  flutter_local_notifications: ^18.0.1
+  timezone: ^0.9.4
+
+  # ── Keamanan ──────────────────────────────────────────────────────────────
+  flutter_secure_storage: ^10.3.4
+  safe_device: ^1.4.1
+  cryptography: ^2.9.0
+  pointycastle: ^4.0.0
+  flutter_dotenv: ^5.2.1
+  device_info_plus: ^12.3.0
+
+  # ── UI & Animasi ──────────────────────────────────────────────────────────
+  lottie: ^3.6.1
+  flutter_svg: ^2.0.15
+  cached_network_image: ^3.3.1
+  shimmer: ^3.0.0
+  percent_indicator: ^4.2.3
+  intl: ^0.20.0
+  table_calendar: ^3.1.3
+  # ── State & Utilitas ──────────────────────────────────────────────────────
+  provider: ^6.1.5
+  package_info_plus: ^9.0.0
+  connectivity_plus: ^7.0.0
+  permission_handler: ^11.3.1
+  url_launcher: ^6.3.1
+  path: ^1.9.0
+  uuid: ^4.5.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
+
+# ── Ikon Launcher ─────────────────────────────────────────────────────────────
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: 'assets/image/sae_logo.png'
+  adaptive_icon_background: '#00695C'
+  adaptive_icon_foreground: 'assets/image/sae_logo.png'
+  min_sdk_android: 21
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/image/
+    - assets/animation/
+    - assets/icons/
+    - assets/fonts/
+    # `assets/models/` is deliberately NOT listed.
+    #
+    # It holds MobileFaceNet.tflite and face_antispoof.tflite — 9 MB combined —
+    # and nothing loads them: face detection runs on ML Kit, which bundles its
+    # own model (see `lib/data/face_detection_service.dart`). Listing the
+    # directory copied both files into every APK and every split-per-ABI output
+    # for no benefit.
+    #
+    # The files are left on disk so this is reversible. If a TFLite-based
+    # detector is adopted later, re-add the entry and delete this comment.
+    #
+    # `.env` is declared because `flutter_dotenv` reads it from the asset bundle
+    # during local development. It is gitignored, so a fresh clone has no such
+    # file and the build fails with "No file or variants found for asset: .env".
+    # CI writes an empty placeholder for exactly this reason — every value it
+    # needs arrives via `--dart-define`, which `FirebaseConfig` prefers.
+    - .env
+
+  fonts:
+    - family: Nunito
+      fonts:
+        - asset: assets/fonts/Nunito-ExtraLight.ttf
+          weight: 200
+        - asset: assets/fonts/Nunito-Light.ttf
+          weight: 300
+        - asset: assets/fonts/Nunito-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Nunito-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Nunito-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Nunito-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Nunito-ExtraBold.ttf
+          weight: 800
+        - asset: assets/fonts/Nunito-Black.ttf
+          weight: 900
+        - asset: assets/fonts/Nunito-Italic.ttf
+          style: italic
+        - asset: assets/fonts/Nunito-LightItalic.ttf
+          weight: 300
+          style: italic
+        - asset: assets/fonts/Nunito-BoldItalic.ttf
+          weight: 700
+          style: italic
+        - asset: assets/fonts/Nunito-ExtraBoldItalic.ttf
+          weight: 800
+          style: italic
+        - asset: assets/fonts/Nunito-BlackItalic.ttf
+          weight: 900
+          style: italic

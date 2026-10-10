@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Konfigurasi keamanan jaringan SAE.
+    ─────────────────────────────────
+    • Melarang seluruh HTTP cleartext — hanya HTTPS yang diizinkan.
+    • Mencegah tool intercept (Charles Proxy, Burp Suite, Fiddler, HTTP Canary)
+      yang meng-inject CA sendiri, karena CA pengguna (user-added CAs) tidak
+      dipercaya pada API production.
+    • Debug build tetap mengizinkan user CA agar testing bisa pakai proxy lokal.
+
+    Catatan sertifikat pinning:
+    Pinning TIDAK diimplementasikan untuk Firebase/Cloudinary karena keduanya
+    menggunakan sertifikat Google/Cloudinary yang dirotasi tanpa jadwal publik —
+    pinning akan menyebabkan outage saat rotasi. Batas keamanan nyata ada di
+    firestore.rules, bukan di lapisan transport.
+-->
+<network-security-config>
+
+    <!-- Basis: semua domain melarang cleartext, hanya percaya system CA -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <!-- Hanya CA sistem — bukan user-added CA.
+                 Ini mencegah proxy MITM yang meng-inject CA sendiri
+                 (Charles, Burp Suite, HTTP Canary). -->
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Firebase Firestore & Authentication -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">firestore.googleapis.com</domain>
+        <domain includeSubdomains="true">identitytoolkit.googleapis.com</domain>
+        <domain includeSubdomains="true">securetoken.googleapis.com</domain>
+        <domain includeSubdomains="true">firebase.googleapis.com</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+
+    <!-- Cloudinary — upload & delivery foto -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">api.cloudinary.com</domain>
+        <domain includeSubdomains="true">res.cloudinary.com</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+
+    <!-- OpenStreetMap tiles (flutter_map) -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">tile.openstreetmap.org</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+
+    <!-- Debug: izinkan user CA agar development bisa pakai proxy lokal -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+
+</network-security-config>

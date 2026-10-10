@@ -1,0 +1,330 @@
+name: Build Flutter APK
+
+# ── Trigger ────────────────────────────────────────────────────────────────────
+# Runs on every push to main/master, on pull requests into those branches,
+# and on manual dispatch (for cut releases outside the normal push cadence).
+#
+# This file must live at `<repo root>/.github/workflows/`. It previously sat at
+# `SAE/.github/workflows/`, one directory too deep: GitHub only reads workflows
+# from the repository root, so the build silently never ran. The `paths` filters
+# below were already written relative to the repo root — `SAE/**` — which is the
+# tell that the file was in the wrong place.
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'SAE/**'
+      - 'SAE-Dashboard/**'
+      - '.github/workflows/build-apk.yml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'SAE/**'
+      - 'SAE-Dashboard/**'
+  workflow_dispatch:
+    inputs:
+      build_target:
+        description: 'Build target (apk / aab / both)'
+        required: false
+        default: 'apk'
+        type: choice
+        options: [apk, aab, both]
+      version_name:
+        description: 'Version name (e.g. 1.2.0)'
+        required: false
+        default: '1.0.0'
+      version_code:
+        description: 'Version code (integer, e.g. 1)'
+        required: false
+        default: '1'
+
+# ── Concurrency ────────────────────────────────────────────────────────────────
+# Cancel an in-progress run when a newer commit arrives on the same branch.
+# Avoids two release builds racing to upload the same artifact.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── 1. Build APK / AAB ──────────────────────────────────────────────────────
+  build:
+    name: Build Flutter APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Java 17 ───────────────────────────────────────────────────────────────
+      # AGP 9 requires Java 17+. Java 21 works too; 17 is the LTS that
+      # flutter-action pins against, so we match it.
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # ── Flutter ───────────────────────────────────────────────────────────────
+      # Pinned to an exact version, because `pubspec.lock` resolves against a
+      # specific Flutter and Dart pair. It previously pinned 3.32.7, which ships
+      # Dart 3.8 — while `pubspec.yaml` requires `sdk: ^3.13.5` and the lockfile
+      # records `flutter: ">=3.44.0"`. `flutter pub get` therefore failed during
+      # version solving, before a single file was compiled.
+      #
+      # When this pin changes, run `flutter pub get` locally and commit the
+      # updated `pubspec.lock`, or CI will fail the same way.
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.6'
+          cache: true
+
+      - name: Verify Flutter installation
+        run: |
+          flutter --version
+          flutter doctor -v
+        working-directory: SAE
+
+      # ── Dependencies ──────────────────────────────────────────────────────────
+      - name: Install Flutter dependencies
+        run: flutter pub get
+        working-directory: SAE
+
+      # ── Lint & Test ───────────────────────────────────────────────────────────
+      - name: Analyze (lint)
+        run: flutter analyze --no-fatal-infos
+        working-directory: SAE
+
+      - name: Run unit tests
+        run: flutter test
+        working-directory: SAE
+
+      # ── google-services.json ──────────────────────────────────────────────────
+      # Written from the GOOGLE_SERVICES_JSON secret. The file is gitignored, so a
+      # fresh clone has none — and the `com.google.gms.google-services` plugin
+      # fails the build outright when it is missing, rather than degrading.
+      #
+      # It used to print a warning and continue, which produced a build failure
+      # several steps later with a message about a missing process resource. This
+      # now fails here, where the cause is the actual one.
+      - name: Write google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "::error::GOOGLE_SERVICES_JSON secret is not set."
+            echo "Add it under Settings → Secrets and variables → Actions:"
+            echo "  Firebase Console → Project settings → Your apps → Android"
+            echo "  → Download google-services.json, paste the file contents."
+            exit 1
+          fi
+          echo "$GOOGLE_SERVICES_JSON" > SAE/android/app/google-services.json
+          echo "✅ google-services.json written from secret"
+
+      # ── .env placeholder ──────────────────────────────────────────────────────
+      # `pubspec.yaml` lists `.env` under `assets:` so `flutter_dotenv` can read it
+      # during local development. `.env` is gitignored, so on a fresh clone the
+      # asset does not exist and the build fails with:
+      #   "No file or variants found for asset: .env"
+      #
+      # CI does not need its contents — every value is injected via
+      # `--dart-define`, which takes priority in `FirebaseConfig`. An empty file
+      # satisfies the asset declaration without putting anything secret in it.
+      - name: Create empty .env placeholder
+        run: |
+          : > SAE/.env
+          echo "✅ .env placeholder created (CI values come from --dart-define)"
+
+      # ── Keystore (release builds only) ────────────────────────────────────────
+      # The keystore is stored as a base64-encoded secret KEY_STORE_BASE64.
+      # Generate it with: base64 -i path/to/release.jks | tr -d '\n'
+      # Then add it as a repository secret named KEY_STORE_BASE64.
+      # NOTE: there is deliberately no `if:` on this step. The `secrets` context
+      # is NOT available to a step-level `if:` (see GitHub's "Context
+      # availability" table), and referencing it there makes the whole workflow
+      # fail validation with "Unrecognized named-value: 'secrets'" before any
+      # job starts. The emptiness check therefore lives in the shell instead.
+      - name: Decode keystore
+        env:
+          KEY_STORE_BASE64: ${{ secrets.KEY_STORE_BASE64 }}
+        run: |
+          if [ -z "$KEY_STORE_BASE64" ]; then
+            echo "::warning::KEY_STORE_BASE64 secret is not set — skipping keystore decode."
+            exit 0
+          fi
+          echo "$KEY_STORE_BASE64" | base64 --decode > SAE/android/release.keystore.jks
+          echo "✅ Keystore decoded"
+
+      # ── Build ─────────────────────────────────────────────────────────────────
+      - name: Build APK (release)
+        env:
+          # Firebase credentials — set these as repository secrets
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+          FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
+          FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+          FIREBASE_MEASUREMENT_ID: ${{ secrets.FIREBASE_MEASUREMENT_ID }}
+          # Cloudinary credentials — unsigned preset only
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_UPLOAD_PRESET: ${{ secrets.CLOUDINARY_UPLOAD_PRESET }}
+          CLOUDINARY_LEAVE_PRESET: ${{ secrets.CLOUDINARY_LEAVE_PRESET }}
+          # Signing (populated only when keystore secret is set)
+          KEY_STORE: ${{ github.workspace }}/SAE/android/release.keystore.jks
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          BUILD_TARGET="${{ github.event.inputs.build_target || 'apk' }}"
+          VERSION_NAME="${{ github.event.inputs.version_name || '1.0.0' }}"
+          VERSION_CODE="${{ github.event.inputs.version_code || '1' }}"
+
+          # Build flags shared between APK and AAB.
+          #
+          # Note the absence of a `--strip` flag. The toolchain warns during an
+          # obfuscated release build that "the generated ELF library contains
+          # unobfuscated DWARF debugging information... use --strip to remove it",
+          # but `flutter build apk` has no such option in Flutter 3.47.6 — adding
+          # it fails the build instantly with "Could not find an option named
+          # --strip". Check `flutter build apk --help` before editing this list.
+          FLAGS=(
+            "--release"
+            "--obfuscate"
+            "--split-debug-info=build/debug-info"
+            "--build-name=${VERSION_NAME}"
+            "--build-number=${VERSION_CODE}"
+            "--dart-define=FIREBASE_API_KEY=${FIREBASE_API_KEY}"
+            "--dart-define=FIREBASE_AUTH_DOMAIN=${FIREBASE_AUTH_DOMAIN}"
+            "--dart-define=FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}"
+            "--dart-define=FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET}"
+            "--dart-define=FIREBASE_MESSAGING_SENDER_ID=${FIREBASE_MESSAGING_SENDER_ID}"
+            "--dart-define=FIREBASE_APP_ID=${FIREBASE_APP_ID}"
+            "--dart-define=FIREBASE_MEASUREMENT_ID=${FIREBASE_MEASUREMENT_ID}"
+            "--dart-define=CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}"
+            "--dart-define=CLOUDINARY_UPLOAD_PRESET=${CLOUDINARY_UPLOAD_PRESET}"
+            "--dart-define=CLOUDINARY_LEAVE_PRESET=${CLOUDINARY_LEAVE_PRESET:-${CLOUDINARY_UPLOAD_PRESET}}"
+          )
+
+          cd SAE
+          flutter clean
+
+          # `build.gradle.kts` refuses to sign a release build with the debug key
+          # unless this is set, so that a missing keystore secret fails with a
+          # sentence about the keystore rather than silently producing an APK that
+          # cannot be updated on a real device. CI opts in explicitly, and says so
+          # in the job summary, because the default push build is a compile check
+          # rather than a distribution.
+          if [ -z "$KEY_STORE_PASSWORD" ]; then
+            echo "::warning::No keystore secret configured — the release APK will be signed with the debug key. It cannot be published or updated in place."
+            echo "SAE_RELEASE_UNSIGNED=1" >> "$GITHUB_ENV"
+          fi
+
+          if [[ "$BUILD_TARGET" == "apk" || "$BUILD_TARGET" == "both" ]]; then
+            echo "🔨 Building split APKs..."
+            flutter build apk "${FLAGS[@]}" --split-per-abi
+            echo "✅ APK build complete"
+            ls -lh build/app/outputs/flutter-apk/*.apk
+          fi
+
+          if [[ "$BUILD_TARGET" == "aab" || "$BUILD_TARGET" == "both" ]]; then
+            echo "🔨 Building AAB..."
+            flutter build appbundle "${FLAGS[@]}"
+            echo "✅ AAB build complete"
+            ls -lh build/app/outputs/bundle/release/app-release.aab
+          fi
+
+      # ── Upload artifacts ──────────────────────────────────────────────────────
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sae-apk-${{ github.sha }}
+          path: |
+            SAE/build/app/outputs/flutter-apk/*.apk
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        if: ${{ github.event.inputs.build_target == 'aab' || github.event.inputs.build_target == 'both' }}
+        with:
+          name: sae-aab-${{ github.sha }}
+          path: SAE/build/app/outputs/bundle/release/app-release.aab
+          retention-days: 30
+          if-no-files-found: ignore
+
+      # ── Debug symbols (upload to retain for crash deobfuscation) ─────────────
+      - name: Upload debug symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: sae-debug-symbols-${{ github.sha }}
+          path: SAE/build/debug-info/
+          retention-days: 90
+          if-no-files-found: ignore
+
+  # ── 2. Dashboard build ──────────────────────────────────────────────────────
+  build-dashboard:
+    name: Build SAE Dashboard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: SAE-Dashboard/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: SAE-Dashboard
+
+      - name: Type check
+        run: npm run typecheck
+        working-directory: SAE-Dashboard
+
+      - name: Run tests
+        run: npm test
+        working-directory: SAE-Dashboard
+
+      # Write .env for build — only VITE_ vars are exposed to the browser bundle
+      - name: Write .env for build
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          VITE_FIREBASE_MEASUREMENT_ID: ${{ secrets.VITE_FIREBASE_MEASUREMENT_ID }}
+        run: |
+          cat > SAE-Dashboard/.env <<EOF
+          VITE_FIREBASE_API_KEY=${VITE_FIREBASE_API_KEY}
+          VITE_FIREBASE_AUTH_DOMAIN=${VITE_FIREBASE_AUTH_DOMAIN}
+          VITE_FIREBASE_PROJECT_ID=${VITE_FIREBASE_PROJECT_ID}
+          VITE_FIREBASE_STORAGE_BUCKET=${VITE_FIREBASE_STORAGE_BUCKET}
+          VITE_FIREBASE_MESSAGING_SENDER_ID=${VITE_FIREBASE_MESSAGING_SENDER_ID}
+          VITE_FIREBASE_APP_ID=${VITE_FIREBASE_APP_ID}
+          VITE_FIREBASE_MEASUREMENT_ID=${VITE_FIREBASE_MEASUREMENT_ID}
+          VITE_DEMO_MODE=false
+          EOF
+
+      - name: Build production bundle
+        run: npm run build
+        working-directory: SAE-Dashboard
+
+      - name: Upload dashboard artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sae-dashboard-${{ github.sha }}
+          path: SAE-Dashboard/dist/
+          retention-days: 30
+          if-no-files-found: error

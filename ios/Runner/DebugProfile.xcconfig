@@ -1,0 +1,7 @@
+// Debug and profile build settings.
+//
+// Kept separate from the release configuration so a debug build can carry
+// assertions and a verbose Flutter mode without those reaching production.
+#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"
+
+#include "Generated.xcconfig"
