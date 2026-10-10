@@ -80,6 +80,23 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
+      # ── .env placeholder ──────────────────────────────────────────────────────
+      # `pubspec.yaml` lists `.env` under `assets:` so `flutter_dotenv` can read it
+      # during local development. `.env` is gitignored, so on a fresh clone the
+      # asset does not exist — and `flutter analyze` treats a missing declared
+      # asset as a WARNING, which `--no-fatal-infos` does not downgrade, so the
+      # lint step exits 1 before anything is compiled:
+      #   warning • The asset file '.env' doesn't exist ... asset_does_not_exist
+      #
+      # CI does not need its contents — every value is injected via
+      # `--dart-define`, which takes priority in `FirebaseConfig`. An empty file
+      # satisfies the asset declaration without putting anything secret in it.
+      # This must run BEFORE `flutter analyze`.
+      - name: Create empty .env placeholder
+        run: |
+          : > .env
+          echo "✅ .env placeholder created (CI values come from --dart-define)"
+
       # ── Lint & Test ───────────────────────────────────────────────────────────
       - name: Analyze (lint)
         run: flutter analyze --no-fatal-infos
@@ -104,20 +121,6 @@ jobs:
           fi
           echo "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
           echo "✅ google-services.json written from secret"
-
-      # ── .env placeholder ──────────────────────────────────────────────────────
-      # `pubspec.yaml` lists `.env` under `assets:` so `flutter_dotenv` can read it
-      # during local development. `.env` is gitignored, so on a fresh clone the
-      # asset does not exist and the build fails with:
-      #   "No file or variants found for asset: .env"
-      #
-      # CI does not need its contents — every value is injected via
-      # `--dart-define`, which takes priority in `FirebaseConfig`. An empty file
-      # satisfies the asset declaration without putting anything secret in it.
-      - name: Create empty .env placeholder
-        run: |
-          : > .env
-          echo "✅ .env placeholder created (CI values come from --dart-define)"
 
       # ── Keystore (release signing) ────────────────────────────────────────────
       # The keystore is stored as a base64-encoded secret KEY_STORE_BASE64.
